@@ -1,0 +1,59 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Arabic font support */
+@layer base {
+  html[lang="ar"],
+  [dir="rtl"] {
+    font-family: 'Arial', 'Tahoma', system-ui, sans-serif;
+  }
+
+  :root {
+    --mazaya-green: #005B41;
+    --mazaya-green-dark: #004A36;
+    --mazaya-topbar: #1a1a1a;
+  }
+
+  body {
+    font-family: Arial, 'Helvetica Neue', system-ui, sans-serif;
+    color: #1a1a1a;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    font-family: Georgia, 'Times New Roman', serif;
+  }
+}
+
+@layer utilities {
+  .line-clamp-2 {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .line-clamp-3 {
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+}
+
+/* Smooth scrolling */
+html {
+  scroll-behavior: smooth;
+}
+
+/* Custom scrollbar for chat */
+.chat-scroll::-webkit-scrollbar {
+  width: 4px;
+}
+.chat-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.chat-scroll::-webkit-scrollbar-thumb {
+  background: #d1d5db;
+  border-radius: 2px;
+}

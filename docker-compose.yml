@@ -1,0 +1,39 @@
+version: '3.8'
+
+services:
+  backend:
+    build: ./backend
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      - DATABASE_URL=sqlite:///./data/mazaya_fm.db
+    volumes:
+      - ./backend/data:/app/data
+    restart: unless-stopped
+
+  website:
+    build: ./frontend/website
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://backend:8000
+    depends_on:
+      - backend
+    restart: unless-stopped
+    profiles:
+      - full
+
+  admin:
+    build: ./frontend/admin
+    ports:
+      - "3001:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://backend:8000
+      - NEXT_PUBLIC_ADMIN_SECRET=${ADMIN_SECRET}
+    depends_on:
+      - backend
+    restart: unless-stopped
+    profiles:
+      - full

@@ -1,0 +1,42 @@
+{
+  "auto_approval_threshold_kd": 500,
+  "services": {
+    "digital_display": {
+      "description": "LED digital display screen with optional CMS",
+      "32_inch": { "hardware_kd": 160, "installation_kd": 35 },
+      "43_inch": { "hardware_kd": 200, "installation_kd": 35 },
+      "55_inch": { "hardware_kd": 240, "installation_kd": 45 },
+      "cms_addon_kd": 60,
+      "tower_access_fee_kd": 35
+    },
+    "signage": {
+      "description": "Clinic signage (door, waiting area, lobby directory)",
+      "door_sign": { "design_kd": 40, "print_kd": 30, "install_kd": 25 },
+      "waiting_area": { "design_kd": 60, "print_kd": 80, "install_kd": 40 },
+      "lobby_directory": { "design_kd": 80, "install_kd": 60 }
+    },
+    "cctv": {
+      "description": "CCTV surveillance system installation",
+      "per_camera_kd": 85,
+      "nvr_kd": 180,
+      "cabling_per_camera_kd": 25,
+      "installation_kd": 50
+    },
+    "lighting": {
+      "description": "Lighting upgrade or installation",
+      "per_fixture_kd": 35,
+      "wiring_kd": 45,
+      "design_kd": 30
+    },
+    "partition": {
+      "description": "Office / clinic partition walls",
+      "per_sqm_kd": 55,
+      "door_kd": 120,
+      "finishing_kd": 30
+    }
+  },
+  "tower_access_surcharge": {
+    "clinic_vi_tower_a": 1.1,
+    "default": 1.0
+  }
+}

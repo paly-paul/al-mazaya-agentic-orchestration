@@ -1,1 +1,25 @@
 .claude/worktrees/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.db
+*.sqlite3
+
+# Node
+node_modules/
+.next/
+.nuxt/
+dist/
+.cache/
+
+# Env
+.env
+.env.local
+.env.production
+
+# Misc
+*.log

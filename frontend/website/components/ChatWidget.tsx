@@ -82,6 +82,13 @@ export default function ChatWidget() {
     }
   }, []);
 
+  // Listen for open-chat event from CTA button on page
+  useEffect(() => {
+    const handler = () => setIsOpen(true);
+    window.addEventListener('mazaya:open-chat', handler);
+    return () => window.removeEventListener('mazaya:open-chat', handler);
+  }, []);
+
   // Show welcome message on first open
   useEffect(() => {
     if (isOpen && !hasOpened) {

@@ -1,15 +1,30 @@
 version: '3.8'
 
 services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: mazaya_fm
+      POSTGRES_USER: mazaya
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mazaya}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mazaya -d mazaya_fm"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
   backend:
     build: ./backend
     ports:
       - "8000:8000"
     environment:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
-      - DATABASE_URL=sqlite:///./data/mazaya_fm.db
+      - DATABASE_URL=postgresql://mazaya:${POSTGRES_PASSWORD:-mazaya}@postgres:5432/mazaya_fm
       - SECRET_KEY=${SECRET_KEY:-dev-secret-key-change-in-prod}
-      - CORS_ORIGINS=http://localhost:3000,http://localhost:3001
+      - ALLOWED_ORIGINS=http://localhost:3000,http://localhost:3001
       - ADMIN_USERNAME=${ADMIN_USERNAME:-admin}
       - ADMIN_PASSWORD=${ADMIN_PASSWORD:-Admin@Mazaya2025}
       - CLAUDE_MODEL=${CLAUDE_MODEL:-claude-sonnet-4-6}
@@ -19,14 +34,15 @@ services:
       - P1_SLA_HOURS=${P1_SLA_HOURS:-2}
       - P2_SLA_HOURS=${P2_SLA_HOURS:-8}
       - P3_SLA_HOURS=${P3_SLA_HOURS:-48}
-    volumes:
-      - backend_data:/app/data
+    depends_on:
+      postgres:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 10s
+      start_period: 15s
     restart: unless-stopped
 
   website:
@@ -53,4 +69,4 @@ services:
     restart: unless-stopped
 
 volumes:
-  backend_data:
+  postgres_data:

@@ -74,7 +74,7 @@ from routers.dashboard import router as dashboard_router
 from routers.briefing import router as briefing_router
 
 app.include_router(auth_router)
-app.include_router(chat_router)   # contains /api/chat and WebSocket /ws/chat/{session_id}
+app.include_router(chat_router)   # /api/chat, /api/chat/stream (SSE), /api/chat/sessions/{id}
 app.include_router(leads_router)
 app.include_router(tickets_router)
 app.include_router(work_orders_router)

@@ -1,13 +1,19 @@
 """
 Database initialisation script.
 Run standalone: python migrations/init_db.py
-Or called from main.py on startup.
+Or called from main.py on startup (PostgreSQL).
 """
 import sys
 import os
 
 # Allow running from any directory
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+# Default DATABASE_URL for standalone runs (override via env var)
+os.environ.setdefault(
+    "DATABASE_URL",
+    "postgresql://mazaya:mazaya@localhost:5432/mazaya_fm",
+)
 
 from database import engine, Base, create_all_tables
 

@@ -1,19 +1,20 @@
 """
 Chat endpoints:
-  POST /api/chat             — public
-  WebSocket /ws/chat/{sid}   — public streaming
-  GET /api/chat/sessions/{sid}
+  POST /api/chat             — standard request/response (public)
+  POST /api/chat/stream      — SSE streaming (public)
+  GET  /api/chat/sessions/{sid}
 """
 import json
 import logging
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from database import get_db
 from models import ChatSession, ChatMessage
-from schemas.chat import ChatRequest, ChatResponse, SessionResponse, MessageResponse
+from schemas.chat import ChatRequest
 from agent.agent import process_chat, process_chat_stream
 
 logger = logging.getLogger(__name__)
@@ -27,7 +28,7 @@ def _envelope(data=None, error=None):
 
 @router.post("/api/chat")
 async def chat(request: ChatRequest, db: Session = Depends(get_db)):
-    """Send a message to the AI agent and receive a response."""
+    """Send a message to the AI agent and receive a full response."""
     session_id = request.session_id or str(uuid.uuid4())
     language = request.language or "en"
 
@@ -47,6 +48,41 @@ async def chat(request: ChatRequest, db: Session = Depends(get_db)):
     except Exception as e:
         logger.exception(f"Chat error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/api/chat/stream")
+async def chat_stream(request: ChatRequest):
+    """
+    SSE streaming endpoint.  The client sends the same JSON body as POST /api/chat
+    but receives a text/event-stream response.
+
+    Event format:
+        data: {"token": "Hello"}\n\n
+        data: {"done": true, "quick_replies": [...], "actions_taken": [...]}\n\n
+    """
+    session_id = request.session_id or str(uuid.uuid4())
+    language = request.language or "en"
+
+    async def event_generator():
+        # Yield the session_id first so the client can capture it
+        yield f"data: {json.dumps({'session_id': session_id})}\n\n"
+        try:
+            async for chunk in process_chat_stream(session_id, request.message, language):
+                yield f"data: {json.dumps(chunk)}\n\n"
+        except Exception as e:
+            logger.exception(f"SSE stream error: {e}")
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+            yield f"data: {json.dumps({'done': True, 'quick_replies': [], 'actions_taken': []})}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",       # disable Nginx buffering
+            "Connection": "keep-alive",
+        },
+    )
 
 
 @router.get("/api/chat/sessions/{session_id}")
@@ -81,40 +117,3 @@ async def get_session(session_id: str, db: Session = Depends(get_db)):
         "language": session.language,
         "messages": msg_list,
     })
-
-
-# ---------------------------------------------------------------------------
-# WebSocket streaming endpoint
-# ---------------------------------------------------------------------------
-
-@router.websocket("/ws/chat/{session_id}")
-async def websocket_chat(websocket: WebSocket, session_id: str):
-    """Stream chat tokens over WebSocket."""
-    await websocket.accept()
-    try:
-        while True:
-            raw = await websocket.receive_text()
-            try:
-                data = json.loads(raw)
-            except json.JSONDecodeError:
-                await websocket.send_json({"error": "Invalid JSON"})
-                continue
-
-            message = data.get("message", "")
-            language = data.get("language", "en")
-
-            if not message:
-                await websocket.send_json({"error": "Empty message"})
-                continue
-
-            async for chunk in process_chat_stream(session_id, message, language):
-                await websocket.send_json(chunk)
-
-    except WebSocketDisconnect:
-        logger.info(f"WebSocket disconnected: session={session_id}")
-    except Exception as e:
-        logger.exception(f"WebSocket error: {e}")
-        try:
-            await websocket.send_json({"error": str(e)})
-        except Exception:
-            pass

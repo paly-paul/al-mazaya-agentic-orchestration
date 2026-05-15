@@ -5,21 +5,18 @@ Prerequisites:
     The backend must be running at http://localhost:8000.
     Run `seed_db.py` first to ensure vendor data is available.
 
-    pip install httpx pytest pytest-asyncio websockets
+    pip install httpx pytest pytest-asyncio
 
 Run:
     pytest tests/test_e2e.py -v
 """
 
-import asyncio
 import json
 import uuid
 import pytest
 import httpx
-import websockets
 
 BASE = "http://localhost:8000"
-WS_BASE = "ws://localhost:8000"
 ADMIN_USER = "admin"
 ADMIN_PASS = "Admin@Mazaya2025"
 
@@ -350,38 +347,49 @@ def test_e2e_briefing_generation():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# E2E 6 — WebSocket streaming
+# E2E 6 — SSE streaming chat
 # ─────────────────────────────────────────────────────────────────────────────
 
-@pytest.mark.asyncio
-async def test_e2e_websocket_chat():
+def test_e2e_sse_chat_stream():
     """
-    Open a WebSocket connection and send a message; verify tokens stream back.
+    POST to /api/chat/stream and verify SSE tokens arrive followed by a done event.
+    Uses httpx with stream=True to consume the event-stream response.
     """
     session_id = new_session()
-    uri = f"{WS_BASE}/ws/chat/{session_id}"
 
     try:
-        async with websockets.connect(uri) as ws:
-            await ws.send(json.dumps({"message": "Hello!", "language": "en"}))
+        with httpx.Client(timeout=90) as c:
+            with c.stream(
+                "POST",
+                f"{BASE}/api/chat/stream",
+                json={"session_id": session_id, "message": "Hello!", "language": "en"},
+                headers={"Accept": "text/event-stream"},
+            ) as response:
+                assert response.status_code == 200
+                assert "text/event-stream" in response.headers.get("content-type", "")
 
-            tokens = []
-            done = False
-            for _ in range(200):  # safety cap
-                raw = await asyncio.wait_for(ws.recv(), timeout=30)
-                chunk = json.loads(raw)
-                if chunk.get("token"):
-                    tokens.append(chunk["token"])
-                if chunk.get("done"):
-                    done = True
-                    break
+                tokens: list[str] = []
+                done = False
+                for line in response.iter_lines():
+                    line = line.strip()
+                    if not line.startswith("data:"):
+                        continue
+                    json_str = line[5:].strip()
+                    if not json_str:
+                        continue
+                    chunk = json.loads(json_str)
+                    if chunk.get("token"):
+                        tokens.append(chunk["token"])
+                    if chunk.get("done"):
+                        done = True
+                        break
 
-            assert done, "WebSocket stream did not send a 'done' signal"
-            full_response = "".join(tokens)
-            assert len(full_response) > 5, "WebSocket response was too short"
-            print(f"  ✓ WebSocket stream: {len(tokens)} chunks, response='{full_response[:60]}...'")
+                assert done, "SSE stream did not send a 'done' event"
+                full_response = "".join(tokens)
+                assert len(full_response) > 5, "SSE response was too short"
+                print(f"  ✓ SSE stream: {len(tokens)} chunks, response='{full_response[:60]}...'")
     except Exception as e:
-        pytest.skip(f"WebSocket test skipped (backend may not be running): {e}")
+        pytest.skip(f"SSE test skipped (backend may not be running): {e}")
 
 
 # ─────────────────────────────────────────────────────────────────────────────

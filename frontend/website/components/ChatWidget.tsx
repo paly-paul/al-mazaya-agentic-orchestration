@@ -7,6 +7,7 @@ interface Message {
   content: string;
   timestamp: Date;
   actions?: ActionItem[];
+  streaming?: boolean;
 }
 
 interface ActionItem {
@@ -44,13 +45,13 @@ function parseActions(actionsTaken: unknown[]): ActionItem[] {
     if (typeof action === 'string') return { label: action };
     if (typeof action === 'object' && action !== null) {
       const a = action as Record<string, unknown>;
-      const label =
-        (a.action as string) ||
-        (a.type as string) ||
-        (a.label as string) ||
-        'Action taken';
-      const score = typeof a.score === 'number' ? a.score : undefined;
-      const tier = typeof a.tier === 'string' ? a.tier : undefined;
+      const tool = a.tool as string | undefined;
+      const result = a.result as Record<string, unknown> | undefined;
+      const label = tool
+        ? tool.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
+        : (a.label as string) || 'Action taken';
+      const score = result && typeof result.score === 'number' ? result.score : undefined;
+      const tier = result && typeof result.tier === 'string' ? result.tier : undefined;
       return { label, score, tier };
     }
     return { label: String(action) };
@@ -68,6 +69,7 @@ export default function ChatWidget() {
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const abortRef = useRef<AbortController | null>(null);
 
   // Generate or restore session ID
   useEffect(() => {
@@ -110,24 +112,36 @@ export default function ChatWidget() {
     }
   }, [isOpen]);
 
+  // Abort any in-flight SSE stream when component unmounts
+  useEffect(() => {
+    return () => { abortRef.current?.abort(); };
+  }, []);
+
   const sendMessage = useCallback(
     async (text: string) => {
       const trimmed = text.trim();
       if (!trimmed || isLoading || !sessionId) return;
 
-      const userMessage: Message = {
-        role: 'user',
-        content: trimmed,
-        timestamp: new Date(),
-      };
+      // Cancel any previous in-flight request
+      abortRef.current?.abort();
+      const controller = new AbortController();
+      abortRef.current = controller;
 
+      const userMessage: Message = { role: 'user', content: trimmed, timestamp: new Date() };
       setMessages((prev) => [...prev, userMessage]);
       setInputValue('');
       setQuickReplies([]);
       setIsLoading(true);
 
+      // Add a placeholder streaming assistant message
+      const placeholderIdx = Date.now();
+      setMessages((prev) => [
+        ...prev,
+        { role: 'assistant', content: '', timestamp: new Date(), streaming: true },
+      ]);
+
       try {
-        const response = await fetch(`${API_BASE}/api/chat`, {
+        const response = await fetch(`${API_BASE}/api/chat/stream`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -136,31 +150,96 @@ export default function ChatWidget() {
             language: 'en',
             use_case_hint: null,
           }),
+          signal: controller.signal,
         });
 
-        if (!response.ok) {
-          throw new Error(`HTTP ${response.status}`);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        if (!response.body) throw new Error('No response body');
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let assembled = '';
+        let finalActions: ActionItem[] = [];
+        let finalQuickReplies: string[] = [];
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() ?? '';
+
+          for (const line of lines) {
+            const trimmedLine = line.trim();
+            if (!trimmedLine.startsWith('data:')) continue;
+            const jsonStr = trimmedLine.slice(5).trim();
+            if (!jsonStr) continue;
+
+            let chunk: Record<string, unknown>;
+            try { chunk = JSON.parse(jsonStr); } catch { continue; }
+
+            if (chunk.session_id) continue;   // first meta event
+
+            if (typeof chunk.token === 'string') {
+              assembled += chunk.token;
+              setMessages((prev) => {
+                const next = [...prev];
+                const last = next[next.length - 1];
+                if (last?.streaming) {
+                  next[next.length - 1] = { ...last, content: assembled };
+                }
+                return next;
+              });
+            }
+
+            if (chunk.done) {
+              finalQuickReplies = Array.isArray(chunk.quick_replies)
+                ? (chunk.quick_replies as string[])
+                : [];
+              finalActions = parseActions(
+                Array.isArray(chunk.actions_taken) ? (chunk.actions_taken as unknown[]) : []
+              );
+            }
+
+            if (chunk.error) {
+              assembled = 'Sorry, something went wrong. Please try again.';
+            }
+          }
         }
 
-        const data = await response.json();
-        const payload = data?.data ?? data;
+        // Finalise the streaming message
+        setMessages((prev) => {
+          const next = [...prev];
+          const last = next[next.length - 1];
+          if (last?.streaming) {
+            next[next.length - 1] = {
+              ...last,
+              content: assembled || "I'm here to help. How can I assist you today?",
+              streaming: false,
+              actions: finalActions.length > 0 ? finalActions : undefined,
+            };
+          }
+          return next;
+        });
+        setQuickReplies(finalQuickReplies);
+      } catch (err: unknown) {
+        if (err instanceof Error && err.name === 'AbortError') return;
 
-        const assistantMessage: Message = {
-          role: 'assistant',
-          content: payload?.message || "I'm sorry, I couldn't process your request.",
-          timestamp: new Date(),
-          actions: parseActions(payload?.actions_taken || []),
-        };
-
-        setMessages((prev) => [...prev, assistantMessage]);
-        setQuickReplies(Array.isArray(payload?.quick_replies) ? payload.quick_replies : []);
-      } catch {
-        const errorMessage: Message = {
-          role: 'assistant',
-          content: 'Sorry, something went wrong. Please try again.',
-          timestamp: new Date(),
-        };
-        setMessages((prev) => [...prev, errorMessage]);
+        // Replace the streaming placeholder with an error message
+        setMessages((prev) => {
+          const next = [...prev];
+          const last = next[next.length - 1];
+          if (last?.streaming) {
+            next[next.length - 1] = {
+              ...last,
+              content: 'Sorry, something went wrong. Please try again.',
+              streaming: false,
+            };
+          }
+          return next;
+        });
         setQuickReplies([]);
       } finally {
         setIsLoading(false);
@@ -174,13 +253,10 @@ export default function ChatWidget() {
     sendMessage(inputValue);
   };
 
-  const handleQuickReply = (reply: string) => {
-    sendMessage(reply);
-  };
+  const handleQuickReply = (reply: string) => sendMessage(reply);
 
-  const formatTime = (date: Date) => {
-    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  };
+  const formatTime = (date: Date) =>
+    date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
   return (
     <>
@@ -206,7 +282,7 @@ export default function ChatWidget() {
       {/* Chat panel */}
       {isOpen && (
         <div
-          className="fixed bottom-6 right-6 z-50 flex flex-col rounded-2xl shadow-2xl overflow-hidden chat-panel-enter"
+          className="fixed bottom-6 right-6 z-50 flex flex-col rounded-2xl shadow-2xl overflow-hidden"
           style={{
             width: '380px',
             height: '500px',
@@ -261,7 +337,14 @@ export default function ChatWidget() {
                   }`}
                   style={msg.role === 'user' ? { backgroundColor: '#005B41' } : {}}
                 >
-                  {msg.content}
+                  {msg.content || (msg.streaming ? (
+                    <span className="inline-flex gap-1 items-center py-0.5">
+                      <span className="typing-dot" /><span className="typing-dot" /><span className="typing-dot" />
+                    </span>
+                  ) : '')}
+                  {msg.streaming && msg.content && (
+                    <span className="inline-block w-0.5 h-3.5 bg-gray-400 ml-0.5 animate-pulse align-middle" />
+                  )}
                 </div>
 
                 {/* Actions taken info box */}
@@ -290,9 +373,10 @@ export default function ChatWidget() {
                   {formatTime(msg.timestamp)}
                 </span>
 
-                {/* Quick replies after last assistant message */}
+                {/* Quick replies after last non-streaming assistant message */}
                 {msg.role === 'assistant' &&
                   idx === messages.length - 1 &&
+                  !msg.streaming &&
                   quickReplies.length > 0 &&
                   !isLoading && (
                     <div className="mt-2 flex flex-wrap gap-1.5 max-w-[90%]">
@@ -301,11 +385,7 @@ export default function ChatWidget() {
                           key={rIdx}
                           onClick={() => handleQuickReply(reply)}
                           className="px-3 py-1.5 rounded-full text-xs font-medium border transition-all hover:text-white"
-                          style={{
-                            borderColor: '#005B41',
-                            color: '#005B41',
-                            backgroundColor: 'transparent',
-                          }}
+                          style={{ borderColor: '#005B41', color: '#005B41', backgroundColor: 'transparent' }}
                           onMouseEnter={(e) => {
                             e.currentTarget.style.backgroundColor = '#005B41';
                             e.currentTarget.style.color = '#ffffff';
@@ -322,17 +402,6 @@ export default function ChatWidget() {
                   )}
               </div>
             ))}
-
-            {/* Loading indicator */}
-            {isLoading && (
-              <div className="flex items-start">
-                <div className="px-4 py-3 rounded-2xl rounded-bl-md bg-white border border-gray-100 shadow-sm">
-                  <span className="typing-dot" />
-                  <span className="typing-dot" />
-                  <span className="typing-dot" />
-                </div>
-              </div>
-            )}
 
             <div ref={messagesEndRef} />
           </div>

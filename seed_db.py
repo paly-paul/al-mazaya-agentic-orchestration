@@ -17,8 +17,7 @@ from datetime import datetime, timedelta, timezone
 # Allow running from repo root: add backend/ to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "backend"))
 
-os.environ.setdefault("DATABASE_URL", "sqlite:///./backend/data/mazaya_fm.db")
-os.makedirs("backend/data", exist_ok=True)
+os.environ.setdefault("DATABASE_URL", "postgresql://mazaya:mazaya@localhost:5432/mazaya_fm")
 
 from database import SessionLocal, engine, Base
 
